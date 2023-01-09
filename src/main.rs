@@ -6,6 +6,7 @@ use winit::{
 
 use std::{collections::HashMap, sync::Arc};
 
+mod components;
 mod layout;
 use layout::Layout;
 use layout::WindowLifeStatus;
@@ -14,7 +15,7 @@ async fn run() {
 	env_logger::init();
 
 	let event_loop = EventLoop::new();
-	let mut window_map = HashMap::<WindowId, Box<dyn layout::Layout>>::new();
+	let mut window_map = HashMap::<WindowId, Box<dyn Layout>>::new();
 
 	// Start initial layout
 	let window = Arc::new(Window::new(&event_loop).expect("Could not create window"));

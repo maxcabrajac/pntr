@@ -1,10 +1,7 @@
-use std::sync::Arc;
-use winit::{
-	event::WindowEvent,
-	event_loop::EventLoopWindowTarget,
-	window::Window,
-};
+use crate::components::{self, Component};
 use async_trait::async_trait;
+use std::sync::Arc;
+use winit::{event::WindowEvent, event_loop::EventLoopWindowTarget, window::Window};
 
 pub enum WindowLifeStatus {
 	Alive,
@@ -30,13 +27,13 @@ pub trait Layout {
 pub struct Triangle {
 	window: Arc<Window>,
 	surface: wgpu::Surface,
-	device: wgpu::Device,
 	queue: wgpu::Queue,
 	config: wgpu::SurfaceConfiguration,
 	size: winit::dpi::PhysicalSize<u32>,
 
-	pipeline: wgpu::RenderPipeline,
-	cpipeline: wgpu::ComputePipeline,
+	ctx: components::Context,
+
+	canvas: Box<components::Canvas>,
 
 	//Events:
 	resized: bool,
@@ -51,7 +48,6 @@ impl Layout for Triangle {
 		let instance = wgpu::Instance::new(wgpu::Backends::all());
 		let surface = unsafe { instance.create_surface(window.as_ref()) };
 
-
 		let adapter = instance
 			.request_adapter(&wgpu::RequestAdapterOptions {
 				power_preference: wgpu::PowerPreference::default(),
@@ -64,8 +60,12 @@ impl Layout for Triangle {
 		let (device, queue) = adapter
 			.request_device(
 				&wgpu::DeviceDescriptor {
-					features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
-					limits: wgpu::Limits::default(),
+					features: wgpu::Features::PUSH_CONSTANTS
+						| wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
+					limits: wgpu::Limits {
+						max_push_constant_size: 64,
+						..wgpu::Limits::default()
+					},
 					label: None,
 				},
 				None,
@@ -85,90 +85,19 @@ impl Layout for Triangle {
 
 		surface.configure(&device, &config);
 
-		let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
+		let mut ctx = components::Context::new(device, config.format);
 
-		let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor{
-			label: Some("Bind group layout"),
-			entries: &[
-				wgpu::BindGroupLayoutEntry {
-					binding: 0,
-					visibility: wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::FRAGMENT,
-					ty: wgpu::BindingType::StorageTexture {
-						access: wgpu::StorageTextureAccess::ReadWrite,
-						format: wgpu::TextureFormat::Rgba8Unorm,
-						view_dimension: wgpu::TextureViewDimension::D2
-					},
-					count: None,
-				}
-			],
-		});
-
-
-		let render_pipeline_layout =
-		device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-			label: Some("Render Pipeline Layout"),
-			bind_group_layouts: &[&bind_group_layout],
-			push_constant_ranges: &[],
-		});
-
-		let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-			label: Some("Render Pipeline"),
-			layout: Some(&render_pipeline_layout),
-			vertex: wgpu::VertexState {
-				module: &shader,
-				entry_point: "vs_main",
-				buffers: &[],
-			},
-			fragment: Some(wgpu::FragmentState{
-				module: &shader,
-				entry_point: "fs_main",
-				targets: &[Some(wgpu::ColorTargetState {
-					format: config.format,
-					blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-					write_mask: wgpu::ColorWrites::ALL,
-				})]
-			}),
-			primitive: wgpu::PrimitiveState {
-				topology: wgpu::PrimitiveTopology::TriangleList,
-				strip_index_format: None,
-				front_face: wgpu::FrontFace::Ccw,
-				cull_mode: None,
-				polygon_mode: wgpu::PolygonMode::Fill,
-				unclipped_depth: false,
-				conservative: false,
-			},
-			depth_stencil: None,
-			multisample: wgpu::MultisampleState {
-				count: 1,
-				mask: !0,
-				alpha_to_coverage_enabled: false
-			},
-			multiview: None,
-		});
-
-		let compute_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-			label: Some("Compute Pipeline Layout"),
-			bind_group_layouts: &[&bind_group_layout],
-			push_constant_ranges: &[],
-		});
-
-		let cpipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-			label: Some("Compute Pipeline"),
-			layout: Some(&compute_pipeline_layout),
-			module: &shader,
-			entry_point: "compute_main",
-		});
+		let canvas = components::Canvas::new(&mut ctx);
 
 		return Box::new(Triangle {
 			window,
 			surface,
-			device,
 			queue,
 			config,
 			size,
 
-			pipeline,
-			cpipeline,
+			ctx,
+			canvas,
 
 			resized: false,
 			close: false,
@@ -180,85 +109,35 @@ impl Layout for Triangle {
 	}
 
 	fn render(&mut self) {
-		println!("rendering");
 		match self.surface.get_current_texture() {
 			Err(wgpu::SurfaceError::Lost) => self.resized = true,
 			Err(wgpu::SurfaceError::OutOfMemory) => self.close = true,
 			Err(e) => eprintln!("{:?}", e),
 			Ok(output) => {
-				let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+				let view = output
+					.texture
+					.create_view(&wgpu::TextureViewDescriptor::default());
 
-				let tex = self.device.create_texture(&wgpu::TextureDescriptor{
-					label: Some("Texture"),
-					size: wgpu::Extent3d{
-						width: 2000,
-						height: 2000,
-						depth_or_array_layers: 1
+				let mut encoder =
+					self.ctx.device
+						.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+							label: Some("Render Encoder"),
+						});
+
+				self.canvas.render(
+					&mut encoder,
+					&self.ctx,
+					&view,
+					components::Size {
+						h: self.size.height,
+						w: self.size.width,
 					},
-					mip_level_count: 1,
-					sample_count: 1,
-					dimension: wgpu::TextureDimension::D2,
-					format: wgpu::TextureFormat::Rgba8Unorm,
-					usage: wgpu::TextureUsages::STORAGE_BINDING,
-				});
-
-				let tex_view = tex.create_view(&wgpu::TextureViewDescriptor::default());
-
-				let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-					label: Some("Render Encoder"),
-				});
-
-
-				let compute_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor{
-					label: Some("Compute Bind Group"),
-					layout: &self.cpipeline.get_bind_group_layout(0),
-					entries: &[
-						wgpu::BindGroupEntry {
-							binding: 0,
-							resource: wgpu::BindingResource::TextureView(&tex_view),
-						}
-					]
-				});
-
-				let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{
-					label: Some("Compute Pass"),
-				});
-
-				compute_pass.set_pipeline(&self.cpipeline);
-				compute_pass.set_bind_group(0, &compute_bind_group, &[]);
-				compute_pass.dispatch_workgroups(self.size.width, self.size.height, 1);
-
-				drop(compute_pass);
-
-				let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor{
-					label: Some("Render Pass"),
-					color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-						view: &view,
-						resolve_target: None,
-						ops: wgpu::Operations {
-							load: wgpu::LoadOp::Clear(wgpu::Color {
-								r: 0.0,
-								g: 0.0,
-								b: 0.0,
-								a: 1.0,
-							}),
-							store: true,
-						}
-					})],
-					depth_stencil_attachment: None,
-				});
-
-				render_pass.set_pipeline(&self.pipeline);
-				render_pass.set_bind_group(0, &compute_bind_group, &[]);
-				render_pass.draw(0..3, 0..1);
-
-				drop(render_pass);
+				);
 
 				self.queue.submit(std::iter::once(encoder.finish()));
 				output.present();
 			}
 		}
-
 	}
 
 	fn update(
@@ -271,20 +150,19 @@ impl Layout for Triangle {
 			self.resized = false;
 			let new_size = self.window().inner_size();
 			if new_size.width <= 0 || new_size.height <= 0 {
-				return (Alive, None)
+				return (Alive, None);
 			}
 
 			self.size = new_size;
 			self.config.width = new_size.width;
 			self.config.height = new_size.height;
-			self.surface.configure(&self.device, &self.config);
+			self.surface.configure(&self.ctx.device, &self.config);
 		}
 
 		if self.close {
 			self.close = false;
 			return (Dead, None);
 		}
-
 
 		(Alive, None)
 	}
@@ -293,20 +171,19 @@ impl Layout for Triangle {
 		use WindowEvent::*;
 		match event {
 			CloseRequested => self.close = true,
-			Resized(_) | WindowEvent::ScaleFactorChanged {..} => {
+			Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
 				self.resized = true;
-			},
+			}
 			KeyboardInput {
-				input: winit::event::KeyboardInput {
-					state: winit::event::ElementState::Released,
-					virtual_keycode: Some(letter),
-					..
-				},
+				input:
+					winit::event::KeyboardInput {
+						state: winit::event::ElementState::Released,
+						virtual_keycode: Some(letter),
+						..
+					},
 				..
-			} => {
-				match letter {
-					_ => ()
-				}
+			} => match letter {
+				_ => (),
 			},
 			_ => (),
 		}
