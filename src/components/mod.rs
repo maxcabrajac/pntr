@@ -25,7 +25,7 @@ pub struct Rect {
 }
 
 impl Rect {
-	fn new(x: i32, y: i32, w: u32, h: u32) -> Self {
+	pub fn new(x: i32, y: i32, w: u32, h: u32) -> Self {
 		Self {
 			pos: Point { x, y },
 			size: Size { w, h },
@@ -75,6 +75,33 @@ impl ops::Add<Point> for Rect {
 	}
 }
 
+pub trait RectViewportClipSpace {
+	fn set_viewport_rect(&mut self, _: Rect);
+	fn set_clipspace_rect(&mut self, _: Option<Rect>);
+}
+
+impl RectViewportClipSpace for wgpu::RenderPass<'_> {
+	fn set_viewport_rect(&mut self, r: Rect) {
+		self.set_viewport(
+			r.pos.x as f32,
+			r.pos.y as f32,
+			r.size.w as f32,
+			r.size.h as f32,
+			0., 1.);
+	}
+
+	fn set_clipspace_rect(&mut self, or: Option<Rect>) {
+		if let Some(r) = or {
+			use std::cmp::{max, min};
+			let x = max(r.pos.x as u32, 0);
+			let y = max(r.pos.y as u32, 0);
+			let w = r.size.w + min(r.pos.x as u32, 0);
+			let h = r.size.h + min(r.pos.y as u32, 0);
+			self.set_scissor_rect(x, y, w, h);
+		}
+	}
+}
+
 pub struct Pipelines {
 	pub render: Vec<wgpu::RenderPipeline>,
 	pub compute: Vec<wgpu::ComputePipeline>,
@@ -83,14 +110,14 @@ pub struct Pipelines {
 pub trait Component {
 	fn generate_pipelines(_: &Context) -> Pipelines;
 	fn new(_: &mut Context) -> Box<Self>;
-	fn set_rect() -> Result<(), ()>;
 	fn min_size() -> Option<Size>;
 	fn render(
 		&self,
 		_: &mut wgpu::CommandEncoder,
 		_: &Context,
-		_: &wgpu::TextureView,
-		_: Size,
+		output_texture: &wgpu::TextureView,
+		view_port: Rect,
+		clip_space: Option<Rect>,
 	);
 }
 

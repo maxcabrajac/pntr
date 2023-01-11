@@ -11,6 +11,8 @@ mod layout;
 use layout::Layout;
 use layout::WindowLifeStatus;
 
+type InitialLayout = layout::DrawingWindow;
+
 async fn run() {
 	env_logger::init();
 
@@ -18,8 +20,12 @@ async fn run() {
 	let mut window_map = HashMap::<WindowId, Box<dyn Layout>>::new();
 
 	// Start initial layout
+	let ctx = InitialLayout::init();
+
 	let window = Arc::new(Window::new(&event_loop).expect("Could not create window"));
-	let initial_layout = layout::Triangle::new(window).await;
+
+	let mut initial_layout = InitialLayout::new(ctx, window).await;
+	initial_layout.render();
 
 	window_map.insert(initial_layout.window().id(), initial_layout);
 

@@ -1,14 +1,14 @@
-use crate::components::{self, Rect, Size, Context, Pipelines};
+use crate::components::{self, Rect, Context, Pipelines, RectViewportClipSpace};
 
 pub struct Image {
-	rect: Rect,
 	pipelines: std::sync::Arc<Pipelines>,
 	tex: Option<wgpu::Texture>,
+	binding_group: Option<wgpu::BindGroup>,
 }
 
 impl components::Component for Image {
 	fn generate_pipelines(ctx: &Context) -> Pipelines {
-		let shader = ctx.device.create_shader_module(wgpu::include_wgsl!("image.wgsl"));
+		let shader = ctx.device.create_shader_module(wgpu::include_wgsl!("shaders/image.wgsl"));
 
 		let binding_group_layout = ctx.device.create_bind_group_layout(
 			&wgpu::BindGroupLayoutDescriptor {
@@ -33,13 +33,7 @@ impl components::Component for Image {
 				label: Some("Image(Pipeline Layout)"),
 				bind_group_layouts: &[&binding_group_layout],
 
-				push_constant_ranges: &[
-					// window Size + Canvas Rect
-					wgpu::PushConstantRange {
-						stages: wgpu::ShaderStages::VERTEX,
-						range: (0..6*(std::mem::size_of::<i32>() as u32)),
-					},
-				],
+				push_constant_ranges: &[],
 			}
 		);
 
@@ -90,37 +84,14 @@ impl components::Component for Image {
 
 	fn new(ctx: &mut Context) -> Box<Self> {
 		Box::new(Self {
-			rect: Rect::new(100, 100, 100, 100),
 			pipelines: ctx.get_pipelines::<Self>(),
 			tex: None,
+			binding_group: None,
 		})
 
 	}
 
-	fn set_rect() -> Result<(), ()> {
-		Ok(())
-	}
-
-	fn render(&self, encoder: &mut wgpu::CommandEncoder, ctx: &Context, output: & wgpu::TextureView, texture_size: Size) {
-		let tex_view = self.tex
-			.as_ref()
-			.expect("Trying to Render Image with no texture")
-			.create_view(&wgpu::TextureViewDescriptor::default());
-
-		let binding_group = ctx.device.create_bind_group(
-			&wgpu::BindGroupDescriptor {
-				label: Some("Image(Binding group 0)"),
-				layout: &self.pipelines.render[0].get_bind_group_layout(0),
-				entries: &[
-					wgpu::BindGroupEntry {
-						binding: 0,
-						resource: wgpu::BindingResource::TextureView(&tex_view),
-					},
-				],
-			}
-		);
-
-
+	fn render(&self, encoder: &mut wgpu::CommandEncoder, _: &Context, output: & wgpu::TextureView, viewport: Rect, clip_space: Option<Rect>) {
 		let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
 			label: Some("Image(Render Pass)"),
 			color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -135,9 +106,10 @@ impl components::Component for Image {
 		});
 
 		render_pass.set_pipeline(&self.pipelines.render[0]);
-		render_pass.set_bind_group(0, &binding_group, &[]);
-		render_pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, bytemuck::cast_slice(&[texture_size]));
-		render_pass.set_push_constants(wgpu::ShaderStages::VERTEX, 8, bytemuck::cast_slice(&[self.rect]));
+		render_pass.set_viewport_rect(viewport);
+		render_pass.set_clipspace_rect(clip_space);
+		let binding = self.binding_group.as_ref().expect("Trying to render Image with no texture");
+		render_pass.set_bind_group(0, &binding, &[]);
 		render_pass.draw(0..6, 0..1);
 
 		drop(render_pass)
@@ -154,7 +126,27 @@ impl Image {
 		&self.tex
 	}
 
-	pub fn set_texture(&mut self, tex: wgpu::Texture) {
+	pub fn set_texture(&mut self, ctx: &Context, tex: wgpu::Texture) {
 		self.tex = Some(tex);
+
+		let tex_view = self.tex
+			.as_ref()
+			.unwrap()
+			.create_view(&wgpu::TextureViewDescriptor::default());
+
+		let binding_group = ctx.device.create_bind_group(
+			&wgpu::BindGroupDescriptor {
+				label: Some("Image(Binding group 0)"),
+				layout: &self.pipelines.render[0].get_bind_group_layout(0),
+				entries: &[
+					wgpu::BindGroupEntry {
+						binding: 0,
+						resource: wgpu::BindingResource::TextureView(&tex_view),
+					},
+				],
+			}
+		);
+
+		self.binding_group = Some(binding_group);
 	}
 }

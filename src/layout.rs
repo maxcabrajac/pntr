@@ -8,9 +8,16 @@ pub enum WindowLifeStatus {
 	Dead,
 }
 
+#[derive(Default)]
+pub struct LayoutContext {
+	wgpu: Option<wgpu::Instance>
+}
+
 #[async_trait]
 pub trait Layout {
-	async fn new(_: Arc<Window>) -> Box<Self>
+	fn init() -> LayoutContext where Self: Sized;
+
+	async fn new(_: LayoutContext, _: Arc<Window>) -> Box<Self>
 	where
 		Self: Sized;
 	fn window(&self) -> Arc<Window>;
@@ -24,7 +31,7 @@ pub trait Layout {
 	fn event_handler(&mut self, _: winit::event::WindowEvent);
 }
 
-pub struct Triangle {
+pub struct DrawingWindow {
 	window: Arc<Window>,
 	surface: wgpu::Surface,
 	queue: wgpu::Queue,
@@ -41,11 +48,19 @@ pub struct Triangle {
 }
 
 #[async_trait]
-impl Layout for Triangle {
-	async fn new(window: Arc<Window>) -> Box<Self> {
+impl Layout for DrawingWindow {
+
+	fn init() -> LayoutContext where Self: Sized {
+		LayoutContext {
+			wgpu:	Some(wgpu::Instance::new(wgpu::Backends::all())),
+			..LayoutContext::default()
+		}
+	}
+
+	async fn new(layout_ctx: LayoutContext, window: Arc<Window>) -> Box<Self> {
 		let size = window.inner_size();
 
-		let instance = wgpu::Instance::new(wgpu::Backends::all());
+		let instance = layout_ctx.wgpu.expect("Generated with wrong context");
 		let surface = unsafe { instance.create_surface(window.as_ref()) };
 
 		let adapter = instance
@@ -89,7 +104,7 @@ impl Layout for Triangle {
 
 		let canvas = components::Canvas::new(&mut ctx);
 
-		return Box::new(Triangle {
+		return Box::new(Self {
 			window,
 			surface,
 			queue,
@@ -128,10 +143,8 @@ impl Layout for Triangle {
 					&mut encoder,
 					&self.ctx,
 					&view,
-					components::Size {
-						h: self.size.height,
-						w: self.size.width,
-					},
+					components::Rect::new(0, 0, self.size.width, self.size.height),
+					None,
 				);
 
 				self.queue.submit(std::iter::once(encoder.finish()));

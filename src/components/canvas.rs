@@ -3,14 +3,13 @@ use crate::components::{self, Rect, Size, Image, Context, Pipelines};
 // TODO: Use renderBundle in conjunction with buffers to draw different lines in the canvas without reencoding the render pass.
 
 pub struct Canvas {
-	rect: Rect,
 	pipelines: std::sync::Arc<Pipelines>,
 	image: Box<Image>,
 }
 
 impl components::Component for Canvas {
 	fn generate_pipelines(ctx: &Context) -> Pipelines {
-		let shader = ctx.device.create_shader_module(wgpu::include_wgsl!("canvas.wgsl"));
+		let shader = ctx.device.create_shader_module(wgpu::include_wgsl!("shaders/canvas.wgsl"));
 
 		let binding_group_layout = ctx.device.create_bind_group_layout(
 			&wgpu::BindGroupLayoutDescriptor {
@@ -69,22 +68,21 @@ impl components::Component for Canvas {
 		});
 
 		let mut image = Image::new(ctx);
-		image.set_texture(tex);
+		image.set_texture(ctx, tex);
 
 		Box::new(Self{
-			rect: Rect::new(100, 100, 800, 800),
 			pipelines: ctx.get_pipelines::<Self>(),
 			image
 		})
 	}
 
-	fn set_rect() -> Result<(), ()>{
-		Ok(())
-	}
+	fn render(&self, encoder: &mut wgpu::CommandEncoder, ctx: &Context, output: &wgpu::TextureView, viewport: Rect, clip_space: Option<Rect>) {
 
-	fn render(&self, encoder: &mut wgpu::CommandEncoder, ctx: &Context, output: &wgpu::TextureView, texture_size: Size) {
-
-		let tex_view = self.image.get_texture().as_ref().unwrap().create_view(&wgpu::TextureViewDescriptor::default());
+		let tex_view = self.image
+			.get_texture()
+			.as_ref()
+			.unwrap()
+			.create_view(&wgpu::TextureViewDescriptor::default());
 
 		let binding_group = ctx.device.create_bind_group(
 			&wgpu::BindGroupDescriptor {
@@ -111,7 +109,7 @@ impl components::Component for Canvas {
 
 		drop(compute_pass);
 
-		self.image.render(encoder, ctx, output, texture_size);
+		self.image.render(encoder, ctx, output, viewport, clip_space);
 
 	}
 
