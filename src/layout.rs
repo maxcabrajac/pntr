@@ -94,7 +94,7 @@ impl Layout for DrawingWindow {
 			width: size.width,
 			height: size.height,
 			// TODO: Try AutoNoVsync
-			present_mode: wgpu::PresentMode::AutoVsync,
+			present_mode: wgpu::PresentMode::AutoNoVsync,
 			alpha_mode: wgpu::CompositeAlphaMode::Auto,
 		};
 
@@ -183,10 +183,13 @@ impl Layout for DrawingWindow {
 	fn event_handler(&mut self, event: winit::event::WindowEvent) {
 		use WindowEvent::*;
 		match event {
+
 			CloseRequested => self.close = true,
-			Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
+
+			Resized(_) => {
 				self.resized = true;
 			}
+
 			KeyboardInput {
 				input:
 					winit::event::KeyboardInput {
@@ -195,9 +198,21 @@ impl Layout for DrawingWindow {
 						..
 					},
 				..
-			} => match letter {
-				_ => (),
-			},
+				} => {
+					let mut redraw = true;
+					match letter {
+						winit::event::VirtualKeyCode::C => self.canvas.clear(),
+						_ => redraw = false,
+					}
+					if redraw { self.window.request_redraw() }
+			}
+
+			CursorMoved { position, ..} => {
+				self.canvas.mouse_pos(position.into());
+				self.window.request_redraw()
+			}
+
+
 			_ => (),
 		}
 	}

@@ -91,7 +91,7 @@ impl components::Component for Image {
 
 	}
 
-	fn render(&self, encoder: &mut wgpu::CommandEncoder, _: &Context, output: & wgpu::TextureView, viewport: Rect, clip_space: Option<Rect>) {
+	fn render(&mut self, encoder: &mut wgpu::CommandEncoder, _: &Context, output: & wgpu::TextureView, viewport: Rect, clip_space: Option<Rect>) {
 		let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
 			label: Some("Image(Render Pass)"),
 			color_attachments: &[Some(wgpu::RenderPassColorAttachment {

@@ -10,6 +10,15 @@ pub struct Point {
 	pub y: i32,
 }
 
+impl<P: Into<f64>> From<winit::dpi::PhysicalPosition<P>> for Point {
+	fn from(value: winit::dpi::PhysicalPosition<P>) -> Self {
+		return Point {
+			x: value.x.into() as i32,
+			y: value.y.into() as i32,
+		}
+	}
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct Size {
@@ -112,7 +121,7 @@ pub trait Component {
 	fn new(_: &mut Context) -> Box<Self>;
 	fn min_size() -> Option<Size>;
 	fn render(
-		&self,
+		&mut self,
 		_: &mut wgpu::CommandEncoder,
 		_: &Context,
 		output_texture: &wgpu::TextureView,

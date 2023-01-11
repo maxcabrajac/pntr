@@ -33,6 +33,6 @@ var tex: texture_storage_2d<rgba8unorm, read>;
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 	let dim = textureDimensions(tex);
-	var pos = vec2<i32>(i32(in.pos.x * f32(dim.x)), i32(in.pos.y * f32(dim.y)));
+	var pos = vec2<i32>(i32(in.pos.x * f32(dim.x)), i32((1. - in.pos.y) * f32(dim.y)));
 	return textureLoad(tex, pos);
 }
