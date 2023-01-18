@@ -4,7 +4,11 @@ use winit::{
 	window::{Window, WindowId},
 };
 
-use std::{collections::HashMap, sync::Arc, time::{SystemTime, Duration}};
+use std::{
+	collections::HashMap,
+	sync::Arc,
+	time::{Duration, SystemTime},
+};
 
 mod components;
 mod layout;
@@ -13,8 +17,8 @@ use layout::WindowLifeStatus;
 
 type InitialLayout = layout::DrawingWindow;
 
-const FPS: i16 = 100;
-const FRAMETIME: Duration = Duration::from_nanos(1_000_000_000/(FPS as u64));
+const FPS: i16 = 144;
+const FRAMETIME: Duration = Duration::from_nanos(1_000_000_000 / (FPS as u64));
 
 async fn run() {
 	env_logger::init();
@@ -82,13 +86,13 @@ async fn run() {
 			Event::RedrawRequested(window_id) => {
 				if let Some(layout) = window_map.get_mut(&window_id) {
 					if let Some(t) = last_frame_time.get(&window_id) {
-						if t.elapsed().unwrap() < FRAMETIME {
-							layout.window().request_redraw();
-							return;
+						let elap = t.elapsed().unwrap();
+						if elap < FRAMETIME {
+							std::thread::sleep(FRAMETIME - elap);
 						}
 					}
-					last_frame_time.insert(window_id, SystemTime::now());
 					layout.render();
+					last_frame_time.insert(window_id, SystemTime::now());
 				}
 			}
 			_ => (),

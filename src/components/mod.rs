@@ -1,7 +1,11 @@
 use bytemuck::{Pod, Zeroable};
 use core::ops;
 
-use std::{any::TypeId, collections::HashMap, sync::{Arc, Weak}};
+use std::{
+	any::TypeId,
+	collections::HashMap,
+	sync::{Arc, Weak},
+};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -15,7 +19,7 @@ impl<P: Into<f64>> From<winit::dpi::PhysicalPosition<P>> for Point {
 		return Point {
 			x: value.x.into() as i32,
 			y: value.y.into() as i32,
-		}
+		};
 	}
 }
 
@@ -24,6 +28,16 @@ impl<P: Into<f64>> From<winit::dpi::PhysicalPosition<P>> for Point {
 pub struct Size {
 	pub w: u32,
 	pub h: u32,
+}
+
+impl TryFrom<Point> for Size {
+	type Error = core::num::TryFromIntError;
+	fn try_from(value: Point) -> Result<Self, Self::Error> {
+		return Ok(Size {
+			w: value.x.try_into()?,
+			h: value.y.try_into()?,
+		});
+	}
 }
 
 #[repr(C)]
@@ -41,7 +55,7 @@ impl Rect {
 		}
 	}
 
-	fn inside(&self, point: Point) -> bool {
+	pub fn inside(&self, point: Point) -> bool {
 		macro_rules! inside_dim {
 			($dimP:ident, $dimS:ident) => {
 				self.pos.$dimP <= point.$dimP
@@ -65,6 +79,16 @@ impl ops::Add for Point {
 		let mut r = self.clone();
 		r += other;
 		r
+	}
+}
+
+impl ops::Sub for Point {
+	type Output = Self;
+	fn sub(self, rhs: Self) -> Self::Output {
+		return Point {
+			x: self.x - rhs.x,
+			y: self.y - rhs.y,
+		};
 	}
 }
 
@@ -96,7 +120,9 @@ impl RectViewportClipSpace for wgpu::RenderPass<'_> {
 			r.pos.y as f32,
 			r.size.w as f32,
 			r.size.h as f32,
-			0., 1.);
+			0.,
+			1.,
+		);
 	}
 
 	fn set_clipspace_rect(&mut self, or: Option<Rect>) {
@@ -123,17 +149,20 @@ pub trait Component {
 	fn render(
 		&mut self,
 		_: &mut wgpu::CommandEncoder,
-		_: &Context,
+		_: &mut Context,
 		output_texture: &wgpu::TextureView,
 		view_port: Rect,
 		clip_space: Option<Rect>,
 	);
 }
 
+const STAGING_BUFFER_BYTES: u64 = 10;
+
 pub struct Context {
 	pub device: wgpu::Device,
 	pub surface_format: wgpu::TextureFormat,
 	pipeline_map: HashMap<TypeId, Weak<Pipelines>>,
+	pub staging_belt: wgpu::util::StagingBelt,
 }
 
 impl Context {
@@ -142,6 +171,7 @@ impl Context {
 			device,
 			surface_format,
 			pipeline_map: HashMap::new(),
+			staging_belt: wgpu::util::StagingBelt::new(4 * STAGING_BUFFER_BYTES),
 		}
 	}
 
@@ -153,7 +183,8 @@ impl Context {
 		}
 
 		let arc = Arc::new(T::generate_pipelines(self));
-		self.pipeline_map.insert(TypeId::of::<T>(), Arc::<>::downgrade(&arc));
+		self.pipeline_map
+			.insert(TypeId::of::<T>(), Arc::downgrade(&arc));
 		return arc;
 	}
 }

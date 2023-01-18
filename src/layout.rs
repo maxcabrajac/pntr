@@ -1,4 +1,4 @@
-use crate::components::{self, Component};
+use crate::components::{self, Component, Point, Rect};
 use async_trait::async_trait;
 use std::sync::Arc;
 use winit::{event::WindowEvent, event_loop::EventLoopWindowTarget, window::Window};
@@ -10,12 +10,46 @@ pub enum WindowLifeStatus {
 
 #[derive(Default)]
 pub struct LayoutContext {
-	wgpu: Option<wgpu::Instance>
+	wgpu: Option<wgpu::Instance>,
+}
+
+pub struct InputHandler {
+	mouse_position: Option<Point>,
+}
+
+impl InputHandler {
+	fn get_mouse_absolute(&self) -> &Option<Point> {
+		return &self.mouse_position;
+	}
+
+	fn get_mouse_relative(&self, r: Rect) -> Option<Point> {
+		if let Some(p) = self.mouse_position {
+			if r.inside(p) {
+				return Some(p - r.pos);
+			}
+		}
+
+		return None;
+	}
+
+	fn handle_event(&mut self, event: &WindowEvent) {
+		match event {
+			WindowEvent::CursorMoved { position, .. } => {
+				self.mouse_position = Some(position.clone().into());
+			}
+			WindowEvent::CursorLeft { .. } => {
+				self.mouse_position = None;
+			}
+			_ => (),
+		}
+	}
 }
 
 #[async_trait]
 pub trait Layout {
-	fn init() -> LayoutContext where Self: Sized;
+	fn init() -> LayoutContext
+	where
+		Self: Sized;
 
 	async fn new(_: LayoutContext, _: Arc<Window>) -> Box<Self>
 	where
@@ -49,10 +83,12 @@ pub struct DrawingWindow {
 
 #[async_trait]
 impl Layout for DrawingWindow {
-
-	fn init() -> LayoutContext where Self: Sized {
+	fn init() -> LayoutContext
+	where
+		Self: Sized,
+	{
 		LayoutContext {
-			wgpu:	Some(wgpu::Instance::new(wgpu::Backends::all())),
+			wgpu: Some(wgpu::Instance::new(wgpu::Backends::all())),
 			..LayoutContext::default()
 		}
 	}
@@ -93,7 +129,6 @@ impl Layout for DrawingWindow {
 			format: surface.get_supported_formats(&adapter)[0],
 			width: size.width,
 			height: size.height,
-			// TODO: Try AutoNoVsync
 			present_mode: wgpu::PresentMode::AutoNoVsync,
 			alpha_mode: wgpu::CompositeAlphaMode::Auto,
 		};
@@ -134,20 +169,23 @@ impl Layout for DrawingWindow {
 					.create_view(&wgpu::TextureViewDescriptor::default());
 
 				let mut encoder =
-					self.ctx.device
+					self.ctx
+						.device
 						.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 							label: Some("Render Encoder"),
 						});
 
 				self.canvas.render(
 					&mut encoder,
-					&self.ctx,
+					&mut self.ctx,
 					&view,
 					components::Rect::new(0, 0, self.size.width, self.size.height),
 					None,
 				);
 
+				self.ctx.staging_belt.finish();
 				self.queue.submit(std::iter::once(encoder.finish()));
+				self.ctx.staging_belt.recall();
 				output.present();
 			}
 		}
@@ -182,8 +220,8 @@ impl Layout for DrawingWindow {
 
 	fn event_handler(&mut self, event: winit::event::WindowEvent) {
 		use WindowEvent::*;
-		match event {
 
+		match event {
 			CloseRequested => self.close = true,
 
 			Resized(_) => {
@@ -198,20 +236,35 @@ impl Layout for DrawingWindow {
 						..
 					},
 				..
-				} => {
-					let mut redraw = true;
-					match letter {
-						winit::event::VirtualKeyCode::C => self.canvas.clear(),
-						_ => redraw = false,
-					}
-					if redraw { self.window.request_redraw() }
+			} => {
+				let mut redraw = true;
+				match letter {
+					winit::event::VirtualKeyCode::C => self.canvas.clear(),
+					_ => redraw = false,
+				}
+				if redraw {
+					self.window.request_redraw()
+				}
 			}
 
-			CursorMoved { position, ..} => {
+			MouseInput {
+				state,
+				button: winit::event::MouseButton::Left,
+				..
+			} => {
+				use winit::event::ElementState;
+				match state {
+					ElementState::Pressed => self.canvas.mouse_down(),
+					ElementState::Released => self.canvas.mouse_up(),
+				}
+				self.window.request_redraw();
+			}
+
+			CursorMoved { position, .. } => {
+				// TODO: Don't redraw window if no line was drawn
 				self.canvas.mouse_pos(position.into());
-				self.window.request_redraw()
+				self.window.request_redraw();
 			}
-
 
 			_ => (),
 		}
