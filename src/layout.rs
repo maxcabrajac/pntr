@@ -1,4 +1,4 @@
-use crate::components::{self, Component, Point, Rect};
+use crate::{components::{self, Component, Point, Rect}, CustomEvents, framelimiter::FrameLimiter};
 use async_trait::async_trait;
 use std::sync::Arc;
 use winit::{event::WindowEvent, event_loop::EventLoopWindowTarget, window::Window};
@@ -13,10 +13,12 @@ pub struct LayoutContext {
 	wgpu: Option<wgpu::Instance>,
 }
 
+#[allow(unused)]
 pub struct InputHandler {
 	mouse_position: Option<Point>,
 }
 
+#[allow(unused)]
 impl InputHandler {
 	fn get_mouse_absolute(&self) -> &Option<Point> {
 		return &self.mouse_position;
@@ -58,11 +60,11 @@ pub trait Layout {
 	fn render(&mut self);
 	fn update(
 		&mut self,
-		_: &EventLoopWindowTarget<()>,
+		_: &EventLoopWindowTarget<CustomEvents>,
 	) -> (WindowLifeStatus, Option<Box<dyn Layout>>);
 
 	/// Returns a life status and maybe another layout, notice that if the child layout uses the same window, the parent layout must pronounce itself as dead.
-	fn event_handler(&mut self, _: winit::event::WindowEvent);
+	fn event_handler(&mut self, _: winit::event::WindowEvent, _: &FrameLimiter);
 }
 
 pub struct DrawingWindow {
@@ -193,7 +195,7 @@ impl Layout for DrawingWindow {
 
 	fn update(
 		&mut self,
-		_: &EventLoopWindowTarget<()>,
+		_: &EventLoopWindowTarget<CustomEvents>,
 	) -> (WindowLifeStatus, Option<Box<dyn Layout>>) {
 		use WindowLifeStatus::*;
 
@@ -218,7 +220,7 @@ impl Layout for DrawingWindow {
 		(Alive, None)
 	}
 
-	fn event_handler(&mut self, event: winit::event::WindowEvent) {
+	fn event_handler(&mut self, event: winit::event::WindowEvent, frame_limiter: &FrameLimiter) {
 		use WindowEvent::*;
 
 		match event {
@@ -243,7 +245,7 @@ impl Layout for DrawingWindow {
 					_ => redraw = false,
 				}
 				if redraw {
-					self.window.request_redraw()
+					frame_limiter.schedule_redraw(self.window().id());
 				}
 			}
 
@@ -257,13 +259,13 @@ impl Layout for DrawingWindow {
 					ElementState::Pressed => self.canvas.mouse_down(),
 					ElementState::Released => self.canvas.mouse_up(),
 				}
-				self.window.request_redraw();
+				frame_limiter.schedule_redraw(self.window().id());
 			}
 
 			CursorMoved { position, .. } => {
 				// TODO: Don't redraw window if no line was drawn
 				self.canvas.mouse_pos(position.into());
-				self.window.request_redraw();
+				frame_limiter.schedule_redraw(self.window().id());
 			}
 
 			_ => (),

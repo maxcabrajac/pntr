@@ -1,21 +1,27 @@
 use winit::{
 	event::Event,
-	event_loop::EventLoop,
+	event_loop::EventLoopBuilder,
 	window::{Window, WindowId},
 };
 
 use std::{
 	collections::HashMap,
 	sync::Arc,
-	time::{Duration, SystemTime},
+	time::Duration,
 };
 
 mod components;
 mod layout;
+mod framelimiter;
+use framelimiter::FrameLimiter;
 use layout::Layout;
 use layout::WindowLifeStatus;
 
 type InitialLayout = layout::DrawingWindow;
+
+pub enum CustomEvents {
+	ShouldRedraw(WindowId),
+}
 
 const FPS: i16 = 144;
 const FRAMETIME: Duration = Duration::from_nanos(1_000_000_000 / (FPS as u64));
@@ -23,9 +29,10 @@ const FRAMETIME: Duration = Duration::from_nanos(1_000_000_000 / (FPS as u64));
 async fn run() {
 	env_logger::init();
 
-	let event_loop = EventLoop::new();
+	let event_loop = EventLoopBuilder::<CustomEvents>::with_user_event().build();
+
 	let mut window_map = HashMap::<WindowId, Box<dyn Layout>>::new();
-	let mut last_frame_time = HashMap::<WindowId, SystemTime>::new();
+	let frame_limiter = FrameLimiter::new(&event_loop);
 
 	// Start initial layout
 	let ctx = InitialLayout::init();
@@ -49,7 +56,7 @@ async fn run() {
 					}
 					Some(r) => r,
 				}
-				.event_handler(event);
+				.event_handler(event, &frame_limiter);
 			}
 			Event::MainEventsCleared => {
 				let mut should_remove: Vec<WindowId> = Vec::new();
@@ -83,23 +90,20 @@ async fn run() {
 					control_flow.set_exit_with_code(0);
 				}
 			}
-			Event::RedrawRequested(window_id) => {
-				if let Some(layout) = window_map.get_mut(&window_id) {
-					if let Some(t) = last_frame_time.get(&window_id) {
-						let elap = t.elapsed().unwrap();
-						if elap < FRAMETIME {
-							std::thread::sleep(FRAMETIME - elap);
-						}
-					}
+
+			Event::RedrawRequested(wid) |
+			Event::UserEvent(CustomEvents::ShouldRedraw(wid)) => {
+				if let Some(layout) = window_map.get_mut(&wid) {
 					layout.render();
-					last_frame_time.insert(window_id, SystemTime::now());
 				}
 			}
+
+
 			_ => (),
 		}
 	})
 }
 
 fn main() {
-	pollster::block_on(run());
+	async_std::task::block_on(run());
 }
