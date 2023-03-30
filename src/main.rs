@@ -19,6 +19,7 @@ use layout::WindowLifeStatus;
 
 type InitialLayout = layout::DrawingWindow;
 
+#[derive(Debug)]
 pub enum CustomEvents {
 	ShouldRedraw(WindowId),
 }
@@ -105,5 +106,5 @@ async fn run() {
 }
 
 fn main() {
-	async_std::task::block_on(run());
+	pollster::block_on(run());
 }

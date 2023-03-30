@@ -1,70 +1,117 @@
-use crate::CustomEvents;
 use winit::{
 	window::WindowId,
-	event_loop::EventLoop,
+	event_loop::{EventLoop, EventLoopProxy},
 };
+use core::cmp::Reverse;
 use std::{
-	time::{SystemTime, Duration}, collections::HashMap,
+	time::{SystemTime, Duration}, collections::{BinaryHeap, HashMap}, sync::mpsc, thread,
 };
-use async_std::task;
-use async_std::sync::{RwLock, Arc, Mutex};
-use async_std::channel;
+
+use crate::CustomEvents;
 use crate::FRAMETIME;
 
 pub struct FrameLimiter {
-	sender: channel::Sender<WindowId>,
+	sender: mpsc::Sender<WindowId>,
+}
+
+struct FrameSchedule {
+	last_scheduled_frametime: HashMap<WindowId, SystemTime>,
+	schedule_queue: BinaryHeap<Reverse<(SystemTime, WindowId)>>,
+	event_proxy: EventLoopProxy<CustomEvents>,
+}
+
+#[inline(always)]
+fn now() -> SystemTime {
+	SystemTime::now()
+}
+
+impl FrameSchedule {
+	pub fn new(event_proxy: EventLoopProxy<CustomEvents>) -> FrameSchedule {
+		FrameSchedule {
+			last_scheduled_frametime: HashMap::<WindowId, SystemTime>::new(),
+			schedule_queue: BinaryHeap::<Reverse::<(SystemTime, WindowId)>>::new(),
+			event_proxy
+		}
+
+	}
+
+	pub fn time_to_next_frame(&self) -> Option<Duration> {
+		match	self.schedule_queue.peek() {
+			None => None,
+			Some(Reverse((time_of_next_frame, _))) => {
+				Some(time_of_next_frame.duration_since(now()).unwrap_or(Duration::ZERO))
+			}
+		}
+	}
+
+	pub fn insert(&mut self, wid: WindowId) {
+		match self.last_scheduled_frametime.get(&wid) {
+			Some(time) if *time > now() => {
+				// next frame on this window is already scheduled, do nothing
+			}
+
+			Some(time) if *time + FRAMETIME > now()  => {
+				// next frame on this window should be scheduled
+
+				let next_frame_time = *time + FRAMETIME;
+				self.last_scheduled_frametime.insert(wid, next_frame_time);
+				self.schedule_queue.push(Reverse((next_frame_time, wid)));
+			}
+
+			_ => {
+				// should draw imediately
+
+				self.last_scheduled_frametime.insert(wid, now());
+				self.send_redraw(&wid);
+			}
+		}
+	}
+
+	pub fn process_due_frames(&mut self) {
+		while let Some(Reverse((time, wid))) = self.schedule_queue.peek() {
+			if time > &now() {
+				break;
+			}
+
+			self.send_redraw(wid);
+			self.schedule_queue.pop();
+		}
+	}
+
+	fn send_redraw(&self, wid: &WindowId) {
+		self.event_proxy.send_event(CustomEvents::ShouldRedraw(*wid)).unwrap();
+	}
 }
 
 impl FrameLimiter {
 	pub fn new(event_loop: &EventLoop<CustomEvents>) -> Self {
 
-		let (sender, receiver) = channel::unbounded::<WindowId>();
-		let proxy_mutex = Arc::new(Mutex::new(event_loop.create_proxy()));
+		let (sender, receiver) = mpsc::channel::<WindowId>();
+		let event_proxy = event_loop.create_proxy();
 
-		task::spawn(async move {
-			let last_frame_map = Arc::new(RwLock::new(HashMap::<WindowId, (SystemTime, bool)>::new()));
+		thread::spawn(move || {
+
+			let mut schedule = FrameSchedule::new(event_proxy);
 
 			loop {
-				match receiver.recv().await {
-					Err(_) => {
-						return;
-					},
-					Ok(wid) => {
-						let task_last_frame_map = last_frame_map.clone();
-						let task_proxy_mutex = proxy_mutex.clone();
-						task::spawn(async move {
-							let r = task_last_frame_map.read().await;
-							let mut dur = Duration::ZERO;
-							if let Some((t, b)) = r.get(&wid) {
-								if *b { return; }
-								if FRAMETIME > t.elapsed().unwrap() {
-									dur = FRAMETIME - t.elapsed().unwrap();
-								}
-							};
-							drop(r);
+				match schedule.time_to_next_frame() {
+					None => {
+						let wid = receiver.recv().unwrap();
+						schedule.insert(wid);
+					}
 
-							if !dur.is_zero() {
-								let mut w = task_last_frame_map.write().await;
-								if let Some(mut val) = w.get_mut(&wid) {
-									val.1 = true;
-								} else {
-									w.insert(wid.clone(), (SystemTime::now(), true));
-								}
-								drop(w);
-
-								task::sleep(dur).await;
+					Some(dur) => {
+						match receiver.recv_timeout(dur) {
+							Ok(wid) => {
+								schedule.insert(wid);
 							}
-
-							let mut w = task_last_frame_map.write().await;
-							w.insert(wid, (SystemTime::now(), false));
-							drop(w);
-
-							let proxy = task_proxy_mutex.lock().await;
-							if let Err(_) = proxy.send_event(CustomEvents::ShouldRedraw(wid)) {
+							Err(mpsc::RecvTimeoutError::Timeout) => {
+								schedule.process_due_frames();
+							}
+							Err(mpsc::RecvTimeoutError::Disconnected) => {
 								return;
 							}
-							drop(proxy);
-						});
+						}
 					}
 				}
 			}
@@ -76,6 +123,6 @@ impl FrameLimiter {
 	}
 
 	pub fn schedule_redraw(&self, wid: WindowId) {
-		async_std::task::block_on(self.sender.send(wid)).unwrap();
+		self.sender.send(wid).unwrap();
 	}
 }
